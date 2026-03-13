@@ -1,0 +1,63 @@
+name: Update SearXNG MCP Server
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+
+      - name: Check for new commits
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current=$(grep 'rev = ' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          latest=$(gh api repos/tcpipuk/mcp-server/commits/main --jq '.sha')
+          latest_date=$(gh api repos/tcpipuk/mcp-server/commits/main --jq '.commit.committer.date' | cut -dT -f1)
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "latest_date=$latest_date" >> "$GITHUB_OUTPUT"
+          echo "latest_short=${latest:0:7}" >> "$GITHUB_OUTPUT"
+          if [ "$current" != "$latest" ]; then
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update revision and hash
+        if: steps.check.outputs.update == 'true'
+        run: |
+          rev="${{ steps.check.outputs.latest }}"
+          date="${{ steps.check.outputs.latest_date }}"
+          version="0-unstable-${date}"
+
+          sed -i "s|rev = \".*\"|rev = \"${rev}\"|" flake.nix
+          sed -i "s|version = \".*\"|version = \"${version}\"|" flake.nix
+
+          # Clear hash to get the correct one from the build error
+          sed -i 's|hash = "sha256-[^"]*"|hash = ""|' flake.nix
+          new_hash=$(nix build .#default 2>&1 | grep 'got:' | awk '{print $2}') || true
+          sed -i "s|hash = \"\"|hash = \"${new_hash}\"|" flake.nix
+
+      - name: Update flake lock
+        if: steps.check.outputs.update == 'true'
+        run: nix flake update
+
+      - name: Commit and tag
+        if: steps.check.outputs.update == 'true'
+        run: |
+          short="${{ steps.check.outputs.latest_short }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add flake.nix flake.lock
+          git commit -m "Update mcp-server to ${short}"
+          git tag "${short}"
+          git push
+          git push --tags
