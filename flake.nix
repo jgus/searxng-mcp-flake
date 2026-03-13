@@ -35,6 +35,20 @@
         };
         sourceRoot = "source/server";
 
+        # Fix: _handle_sse must return Response() to avoid
+        # "TypeError: 'NoneType' object is not callable" on client disconnect
+        postPatch = ''
+          substituteInPlace mcp_server/server.py \
+            --replace-fail \
+              'from starlette.applications import Starlette' \
+              'from starlette.applications import Starlette
+from starlette.responses import Response' \
+            --replace-fail \
+              '                    await self.server.run(streams[0], streams[1], options, raise_exceptions=True)' \
+              '                    await self.server.run(streams[0], streams[1], options, raise_exceptions=True)
+                return Response()'
+        '';
+
         build-system = [ pythonPackages.hatchling ];
 
         dependencies = with pythonPackages; [
