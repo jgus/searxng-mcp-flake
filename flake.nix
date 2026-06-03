@@ -4,14 +4,21 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    flake-lib = {
+      url = "github:jgus/flake-lib/v1";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, flake-lib }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pin = import ./pin.nix;
         inherit (pin) version sourceRev sourceHash;
         pkgs = import nixpkgs { inherit system; };
+        # Upstream has no releases; track the default branch's HEAD.
+        source = { type = "github"; owner = "tcpipuk"; repo = "mcp-server"; track = "commit"; };
         pythonPackages = pkgs.python3Packages;
         searxng-mcp-server = pythonPackages.buildPythonApplication {
           pname = "searxng-mcp-server";
@@ -63,15 +70,16 @@ from starlette.responses import Response' \
             mainProgram = "mcp-server";
           };
         };
-        update-version = pkgs.writeShellApplication {
-          name = "update-version";
-          text = ''exec ${./update-version.sh} "$@"'';
-        };
       in
       {
         packages = {
-          inherit searxng-mcp-server update-version;
+          inherit searxng-mcp-server;
           default = searxng-mcp-server;
+          # Single-branch (tracks default-branch HEAD as 0-unstable-DATE); no orchestrator.
+          update-version = flake-lib.lib.mkUpdateVersion {
+            inherit pkgs source;
+            buildAttr = "searxng-mcp-server";
+          };
         };
       });
 }
